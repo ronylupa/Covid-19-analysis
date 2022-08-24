@@ -1,0 +1,826 @@
+---
+title: "Israel COVID-19 Data Analysis"
+author: "Matan Gazit, Rony Lupatin, Hemdat Lebel"
+date: "03/06/2021"
+output:
+    rmdformats::readthedown:
+      code_folding: show
+      mathjax: "rmdformats"
+---
+
+```{css, echo=FALSE}
+
+
+#sidebar h2 {
+    z-index: 200;
+    background-color: #31708f;
+    text-align: center;
+    padding: 0.809em;
+    display: block;
+    color: #fcfcfc;
+    font-size: 100%;
+    margin-top: 0px;
+    margin-bottom: 0.809em;
+}
+
+h1, h2, h3, h4, h5, h6, legend {
+    color: #286090;;
+}
+
+#nav-top span.glyphicon {
+    color: #286090;
+}
+
+
+```
+
+![](https://mca.essensys.ro/images/default-source/searo---images/health-topics/corona-virus19/coronavirus-blue.tmb-1920v.jpg?Culture=en&sfvrsn=1bdbbe71_6){width="18.1cm" height="9.4cm"}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In our project we chose to research the COVID-19 data of the state of Israel. Our country went through a difficult and interesting journey with the COVID-19 virus. Israel suffered like the rest of the world from several coronavirus outbreaks and as a result, the government decided on lockdowns that had many consequences. Today, after a successful nationwide vaccine operation, Israel has reduced the morbidity levels and is now in a much better state.
+
+## Project Goals
+
+> **Clarification:** We are aware that the data we chose represents the entire population and is not a sample. Therefore, we cannot research and explore it using statistical tests. Nevertheless, we will use the statistical models we learned in class that are relevant for population modeling and in addition, we will make an artificial sample from the data to use more statistical tests.
+
+In general, we would like to explore the parameters of:
+
+1.  Number of tests
+
+2.  Number of positive COVID-19 cases
+
+3.  Number of deceased
+
+4.  Gender
+
+5.  Different age groups
+
+6.  Different times (divided to COVID-19 outbreaks)
+
+*The methods we will use in this research are:*
+
+1.  Proportion Test on artificial sample
+
+2.  Chi-Square Test of Independence
+
+3.  Model of multiple regression
+
+With the knowledge we have accumulated we will try to draw new and interesting conclusions about our data.
+
+# Data Import and Tidying
+
+```{r libraries,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(grid)
+library(gridExtra)
+library(dplyr)
+library(GGally)
+library(DT)
+library(rmdformats)
+```
+
+The COVID-19 data set was downloaded from [COVID-19 DATA GOV ISRAEL](https://data.gov.il/dataset/covid-19/resource/89f61e3a-4866-4bbf-bcc1-9734e5fee58e), this data is updated regularly on the Ministry of Health website, therefore we downloaded the data on 18/05/2021 in csv format.\
+we used `read.csv` function to read the data.
+
+```{r Reading file}
+#read file
+corona_data <- read.csv('C:/data/corona.csv')
+```
+
+After downloading the data, we had some tidying work to do.\
+We translated the gender column from Hebrew to English in order to work with the data more comfortably in R.\
+We cleaned the data from "unknown" gender and "NULL" age group by using `filter` function.
+
+```{r Tidying1}
+#tidying the data
+corona_data <- corona_data %>%
+filter(gender %in% c("male","female"))%>% #delete unknown gender
+  filter(age_group != "NULL") # delete unknown age group
+```
+
+Afterwards we continued to tidy our data;\
+In all of the numerical columns we encountered values that are "\<15" . We did not want to change them to a "0" because "0" has a numerical value in our data (for example "0" new cases of COVID-19, "0" deceased).\
+In the end, our solution was to change all "\<15" values to "5".\
+Additionally, we switched char types variables to integer or date types, and added a month, a year and an outbreak columns by using `mutate()` function.
+
+```{r Tidying2}
+corona_data[corona_data=="<15"]<- 5 #changing the <15 values to 5
+corona_data$weekly_tests_num <- as.integer(corona_data$weekly_tests_num) #switch type from char to int
+corona_data$weekly_cases <- as.integer(corona_data$weekly_cases) #switch type from char to int
+corona_data$weekly_deceased <- as.integer(corona_data$weekly_deceased) #switch type from char to int
+corona_data$first_week_day <- lubridate::dmy(corona_data$first_week_day)#switch type from char to date
+corona_data$last_week_day <- lubridate::dmy(corona_data$last_week_day)#switch type from char to date
+corona_data[, "year"] <- format(corona_data[,"first_week_day"], "%Y") #adding year column
+corona_data$year <- as.integer(corona_data$year) #switch type from char to int
+corona_data[, "month"] <- format(corona_data[,"first_week_day"], "%m") #adding month column
+corona_data$month <- as.integer(corona_data$month) #switch type from char to int
+corona_data <- corona_data %>% relocate(month, .before = first_week_day) #move the column to the left side
+corona_data <- corona_data %>% relocate(year, .before = month) #move the column to the left side
+#add an outbreak column
+new_data1 <- corona_data%>%
+  filter(year=="2020")%>%
+  mutate(outbreak = cut(month, breaks = c(0,5,8,10,12),labels = c("first","no_outbreak","second","no_outbreak")))
+
+new_data2 <- corona_data%>%
+  filter(year=="2021")%>%
+  mutate(outbreak = cut(month, breaks = c(0,2,5),labels = c("third","no_outbreak")))
+
+corona_data <- bind_rows(new_data1,new_data2)
+
+```
+
+Let's briefly have a look at the data:
+
+```{r datatable}
+datatable(corona_data) #show the datatable
+```
+
+# Visualizations {#visualizations}
+
+We examined our data through different visualizations to analyze connections between different variables using the `ggplot2` package.
+
+## First visualization {.tabset}
+
+### Distribution of number of tests by date
+
+```{r visu 1.1,warning=FALSE,message=FALSE}
+tests_num_by_weeks_corona_data <- corona_data %>%
+  select(first_week_day,weekly_tests_num)%>%
+  group_by(first_week_day)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num))
+
+plot_tests_by_weeks<- tests_num_by_weeks_corona_data%>% 
+  ggplot( aes(x=first_week_day, y=weekly_tests_num)) +
+  geom_line(colour = "deepskyblue3",size = 1.2) + 
+  labs(x="Date",y="Number of tests",title ="Number of tests by date")+
+  scale_y_continuous(labels = scales::comma_format())+
+    geom_vline(xintercept = tests_num_by_weeks_corona_data$first_week_day[1],
+               col = "red")+
+  geom_text(aes(x=first_week_day[1]+3,
+                label="first outbreak", y=320000), colour="red", angle=90)+
+  geom_vline(xintercept =tests_num_by_weeks_corona_data$first_week_day[25], 
+            col = "red")+
+  geom_text(aes(x=first_week_day[25]+3,
+                label="second outbreak", y=320000), colour="red", angle=90)+
+  geom_vline(xintercept = tests_num_by_weeks_corona_data$first_week_day[43],
+             col = "red")+
+  geom_text(aes(x=first_week_day[43]+3,
+                label="third outbreak", y=320000), colour="red", angle=90)
+
+plot_tests_by_weeks
+
+```
+
+An upward trend in test numbers can be seen regardless of COVID-19 outbreaks. We conclude that this is due to the accessibility of tests to the public and the high rate of public awareness.
+
+[First visualization]
+
+### Distribution of new cases by date
+
+```{r visu1.2,warning=FALSE,message=FALSE}
+new_cases_by_weeks_corona_data <- corona_data %>%
+  select(first_week_day,weekly_cases)%>% 
+  group_by(first_week_day)%>%
+  summarise(weekly_cases=sum(weekly_cases))
+
+plot_cases_by_weeks <- new_cases_by_weeks_corona_data%>%
+  ggplot( aes(x=first_week_day, y=weekly_cases)) +
+  geom_line(colour = "deepskyblue3",size = 1.2)+ 
+  labs(x="Date",y="Number of new cases",title ="Number of new cases by date")+
+    geom_vline(xintercept = new_cases_by_weeks_corona_data$first_week_day[1],
+               col = "red")+
+  geom_text(aes(x=first_week_day[1]+3,
+                label="first outbreak", y=30000), colour="red", angle=90)+
+  geom_vline(xintercept = new_cases_by_weeks_corona_data$first_week_day[25],
+             col = "red")+
+  geom_text(aes(x=first_week_day[25]+3,
+                label="second outbreak", y=30000), colour="red", angle=90)+
+  geom_vline(xintercept = new_cases_by_weeks_corona_data$first_week_day[43],
+             col = "red")+
+  geom_text(aes(x=first_week_day[43]+3,
+                label="third outbreak", y=30000), colour="red", angle=90)
+
+plot_cases_by_weeks
+
+```
+
+We can see that with the help of the extensive vaccination campaign, the number of positive cases is decreasing consistently and significantly.
+
+[First visualization]
+
+### Distribution of number of deceased by date
+
+```{r visu1.3,warning=FALSE,message=FALSE}
+deceased_num_by_weeks_corona_data <- corona_data %>%
+  select(first_week_day,weekly_deceased)%>%
+  group_by(first_week_day)%>%
+  summarise(weekly_deceased=sum(weekly_deceased))
+
+plot_deceased_by_weeks <-deceased_num_by_weeks_corona_data %>%
+  ggplot( aes(x=first_week_day, y=weekly_deceased)) +
+  geom_line(colour = "deepskyblue3",size = 1.2) +
+  labs(x="Date", y="Number of deceased",title = "Number of deceased by date")+
+    geom_vline(xintercept = deceased_num_by_weeks_corona_data$first_week_day[1],
+               col = "red")+
+  geom_text(aes(x=first_week_day[1]+3,
+                label="first outbreak", y=200), colour="red", angle=90)+
+  geom_vline(xintercept = deceased_num_by_weeks_corona_data$first_week_day[25],
+             col = "red")+
+  geom_text(aes(x=first_week_day[25]+3,
+                label="second outbreak", y=200), colour="red", angle=90)+
+  geom_vline(xintercept = deceased_num_by_weeks_corona_data$first_week_day[43],
+             col = "red")+
+  geom_text(aes(x=first_week_day[43]+3,
+                label="third outbreak", y=200), colour="red", angle=90)
+
+plot_deceased_by_weeks
+```
+
+In addition, the decline in the number of COVID-19 cases coincides simultaneously with a decrease in the number of deaths.
+
+[First visualization]
+
+### Percentage of positive tests
+
+```{r visu1.4,warning=FALSE,message=FALSE}
+pos_tests <- corona_data %>%
+  select(first_week_day,weekly_tests_num,weekly_cases)%>%
+  mutate(negative = (weekly_tests_num-weekly_cases))%>%
+  group_by(first_week_day)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num),
+            weekly_cases=sum(weekly_cases),negative=sum(negative))%>%
+  pivot_longer( cols = 3:4,names_to = "result", values_to = "TOTAL")%>%
+  mutate(prop= TOTAL/weekly_tests_num)%>%
+  filter(result=="weekly_cases")
+
+pos_tests<- as.data.frame(pos_tests)
+
+ggplot(pos_tests, aes(x=first_week_day, y=prop))+
+  geom_line(colour = "deepskyblue3", size = 1.2)+
+  labs(x="Date",y="Percentage",title ="Percentage of positive tests by date")+
+  scale_y_continuous(labels = scales::percent)+
+  geom_vline(xintercept = pos_tests$first_week_day[1], col = "red")+
+  geom_text(aes(x=first_week_day[1]+3,
+                label="first outbreak", y=0.05), colour="red", angle=90)+
+  geom_vline(xintercept = pos_tests$first_week_day[25], col = "red")+
+  geom_text(aes(x=first_week_day[25]+3,
+                label="second outbreak", y=0.05), colour="red", angle=90)+
+  geom_vline(xintercept = pos_tests$first_week_day[43], col = "red")+
+  geom_text(aes(x=first_week_day[43]+3,
+                label="third outbreak", y=0.05), colour="red", angle=90)
+
+
+```
+
+The percentage of positive tests had a major impact on the decisions of the Ministry of Health and the government, we can see the percentage increase at the beginning of each outbreak and decrease respectively after a lockdown was instituted.
+
+[First visualization]
+
+## Second visualization
+
+### Proportion by Gender
+
+```{r visu2.1,warning=FALSE}
+by_gender_corona_data <- corona_data %>%
+  select(gender,weekly_tests_num,weekly_cases,weekly_deceased)
+
+by_gender_corona_data <-summarise_at(group_by(by_gender_corona_data,gender),
+  vars(weekly_tests_num,weekly_cases,weekly_deceased),funs(sum))
+
+by_gender_corona_data <- gather(by_gender_corona_data,'weekly_cases',
+   'weekly_deceased','weekly_tests_num', key = "parameters", value ="by_gender")
+
+by_gender_corona_data <- by_gender_corona_data %>%
+  group_by(parameters) %>%
+  mutate(total = sum(by_gender))%>%
+  mutate(prop= by_gender/total)
+
+by_gender_corona_data<- as.data.frame(by_gender_corona_data)
+  
+plot_by_gender <- ggplot(by_gender_corona_data) +
+    aes(x = parameters , y = prop, fill = gender) +
+    geom_col(color = "black") + 
+    geom_text(aes(label = scales::percent(prop)), position = position_stack(.5))+
+    scale_y_continuous(labels = scales::percent)+
+    labs(y= "Proportion", title ="Proportion by gender")
+
+plot_by_gender
+```
+
+This plot shows interesting information. Firstly, it shows that even though women had more weekly tests then men, the number of weekly positive tests is almost the same. Secondly, although the number of weekly cases between men and women is almost the same (49.55%, 50.45%), many more men died than women (55.11%).
+
+## Third visualization
+
+### Morbidity by Age Distribution
+
+```{r visu3.1}
+#march 2020 - first lockdown
+march_cases_by_age <- corona_data %>%
+  select(month,year,weekly_tests_num,weekly_cases,age_group)%>%
+  filter(month==3,year==2020) %>%
+  mutate(negative = (weekly_tests_num-weekly_cases))%>%
+  group_by(age_group)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num),
+            weekly_cases=sum(weekly_cases),negative=sum(negative))%>%
+  pivot_longer( cols = 3:4,names_to = "result", values_to = "TOTAL")%>%
+  mutate(prop= TOTAL/weekly_tests_num)
+
+march_cases_by_age[march_cases_by_age=="weekly_cases"]<- "positive"
+march_cases_by_age<- as.data.frame(march_cases_by_age)
+
+plot_march <- ggplot(march_cases_by_age) +
+  aes(x = age_group , y = TOTAL, fill = result) +
+  geom_col(color = "black")+
+  labs(x= "Age group", y= "Weekly tests num", title = "March 2020")+
+  scale_fill_manual(values = alpha(c("steelblue1", "firebrick1")))+
+  scale_y_continuous(labels = scales::comma_format())+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5)) 
+
+march_cases_by_age <-march_cases_by_age %>%
+  filter(result=="positive")
+
+plot_march2 <-ggplot(march_cases_by_age, aes(x=age_group, y=prop, group=1))+
+  geom_segment(aes(x=age_group,xend=age_group,y=0,yend=prop),color = "firebrick1")+
+  geom_point(color="firebrick1", size = 2)+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Age group", y= "Percentage of positive tests", title = "March 2020")
+
+#september 2020 - second lockdown
+sep_cases_by_age <- corona_data %>%
+  select(month,year,weekly_tests_num,weekly_cases,age_group)%>%
+  filter(month==9,year==2020) %>%
+  mutate(negative = (weekly_tests_num-weekly_cases))%>%
+  group_by(age_group)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num),
+            weekly_cases=sum(weekly_cases),negative=sum(negative))%>%
+  pivot_longer( cols = 3:4,names_to = "result", values_to = "TOTAL")%>%
+  mutate(prop= TOTAL/weekly_tests_num)
+
+sep_cases_by_age[sep_cases_by_age=="weekly_cases"]<- "positive"
+sep_cases_by_age<- as.data.frame(sep_cases_by_age)
+
+plot_sep <- ggplot(sep_cases_by_age) +
+  aes(x = age_group , y = TOTAL, fill = result) +
+  geom_col(color = "black")+
+  labs(x= "Age group", y= "Weekly tests num", title = "September 2020")+
+  scale_fill_manual(values = alpha(c("steelblue1", "firebrick1")))+
+  scale_y_continuous(labels = scales::comma_format())+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))
+  
+
+sep_cases_by_age <-sep_cases_by_age %>%
+  filter(result=="positive")
+
+plot_sep2 <-ggplot(sep_cases_by_age, aes(x=age_group, y=prop, group=1))+
+  geom_segment(aes(x=age_group,xend=age_group,y=0,yend=prop),color = "firebrick1")+
+  geom_point(color="firebrick1", size = 2)+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Age group", y= "Percentage of positive tests", title = "September 2020")
+
+#January 2020 - third lockdowm
+jan_cases_by_age <- corona_data %>%
+  select(month,year,weekly_tests_num,weekly_cases,age_group)%>%
+  filter(month==1,year==2021) %>%
+  mutate(negative = (weekly_tests_num-weekly_cases))%>%
+  group_by(age_group)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num),
+            weekly_cases=sum(weekly_cases),negative=sum(negative))%>%
+  pivot_longer( cols = 3:4,names_to = "result", values_to = "TOTAL")%>%
+  mutate(prop= TOTAL/weekly_tests_num)
+
+jan_cases_by_age[jan_cases_by_age=="weekly_cases"]<- "positive"
+jan_cases_by_age<- as.data.frame(jan_cases_by_age)
+
+plot_jan <- ggplot(jan_cases_by_age) +
+  aes(x = age_group , y = TOTAL, fill = result) +
+  geom_col(color = "black")+
+  labs(x= "Age group", y= "Weekly tests num", title = "January 2021")+
+  scale_fill_manual(values = alpha(c("steelblue1", "firebrick1")))+
+  scale_y_continuous(labels = scales::comma_format())+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5)) 
+
+jan_cases_by_age <-jan_cases_by_age %>%
+  filter(result=="positive")
+
+plot_jan2 <-ggplot(jan_cases_by_age, aes(x=age_group, y=prop, group=1))+
+  geom_segment(aes(x=age_group,xend=age_group,y=0,yend=prop),color = "firebrick1")+
+  geom_point(color="firebrick1", size = 2)+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Age group", y= "Percentage of positive tests", title = "January 2021")
+
+#February 2021 - After vaccinations
+feb_cases_by_age <- corona_data %>%
+  select(month,year,weekly_tests_num,weekly_cases,age_group)%>%
+  filter(month==2,year==2021) %>%
+  mutate(negative = (weekly_tests_num-weekly_cases))%>%
+  group_by(age_group)%>%
+  summarise(weekly_tests_num=sum(weekly_tests_num),
+            weekly_cases=sum(weekly_cases),negative=sum(negative))%>%
+  pivot_longer( cols = 3:4,names_to = "result", values_to = "TOTAL")%>%
+  mutate(prop= TOTAL/weekly_tests_num)
+
+feb_cases_by_age[feb_cases_by_age=="weekly_cases"]<- "positive"
+feb_cases_by_age<- as.data.frame(feb_cases_by_age)
+
+plot_feb <- ggplot(feb_cases_by_age) +
+  aes(x = age_group , y = TOTAL, fill = result) +
+  geom_col(color = "black")+
+  labs(x= "Age group", y= "Weekly tests num", title = "February 2021")+
+  scale_fill_manual(values = alpha(c("steelblue1", "firebrick1")))+
+  scale_y_continuous(labels = scales::comma_format())+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5)) 
+
+feb_cases_by_age <-feb_cases_by_age %>%
+  filter(result=="positive")
+
+plot_feb2 <-ggplot(feb_cases_by_age, aes(x=age_group, y=prop, group=1))+
+  geom_segment(aes(x=age_group,xend=age_group,y=0,yend=prop),color = "firebrick1")+
+  geom_point(color="firebrick1", size = 2)+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Age group", y= "Percentage of positive tests", title = "February 2021")
+
+grid.arrange(plot_march,plot_sep,plot_jan,plot_feb, top= "By outbreaks")
+grid.arrange(plot_march2,plot_sep2,plot_jan2,plot_feb2, top= "By outbreaks")
+```
+
+We filtered out the months in which the COVID-19 outbreaks occurred and checked the number of positive cases in relation to the number of tests.\
+In these graphs we can also see the distribution of the number of tests in relation to age. In the months of September, December and February the youngest age group (0-19) had the largest number of tests, however in the month of March, the gap between the different age groups was much smaller.
+
+## Fourth visualization {.tabset}
+
+### Weekly tests by age and gender
+
+```{r 4.1}
+tests_by_age_and_gender <- corona_data %>%
+  select(age_group,weekly_tests_num,gender)
+
+tests_by_age_and_gender <- summarise_at(group_by(tests_by_age_and_gender,age_group,gender),
+            vars(weekly_tests_num),funs(sum))
+
+plot1 <-ggplot(tests_by_age_and_gender, aes(x = age_group, fill = gender,y = ifelse(test = gender == "male",yes = -weekly_tests_num, no = weekly_tests_num))) + 
+  geom_bar(stat = "identity",color = "black") +
+  scale_y_continuous(labels = abs, limits = max(tests_by_age_and_gender$weekly_tests_num) * c(-1,1)) +
+  coord_flip()+
+  labs(y="Number of tests",x="Age group")+
+  geom_text(data = ~subset(., gender == "female"),
+            aes(label = round(weekly_tests_num, digits = 2),
+                y = weekly_tests_num), hjust = 0,size=3) +
+  geom_text(data = ~subset(., gender == "male"),
+            aes(label = round(weekly_tests_num, digits = 2),
+                y = -weekly_tests_num), hjust = 1,size =3)
+
+plot1
+```
+
+It can be seen that in all age groups (except the 0-19 age group), women had more tests than men, and that in general most of the COVID-19 tests were done for the age group of 0-19.
+
+[Fourth visualization]
+
+### Weekly cases by age and gender
+
+```{r 4.2}
+#weekly cases by age and gender
+cases_by_age_and_gender <- corona_data %>%
+  select(age_group,weekly_cases,gender)
+
+cases_by_age_and_gender<-
+  summarise_at(group_by(cases_by_age_and_gender,age_group,gender),
+            vars(weekly_cases),funs(sum))
+
+plot2<-ggplot(cases_by_age_and_gender, aes(x = age_group, fill = gender,
+      y = ifelse(test = gender == "male",yes=-weekly_cases, no = weekly_cases))) + 
+  geom_bar(stat = "identity",color = "black") +
+  scale_y_continuous(labels = abs, limits = max(cases_by_age_and_gender$weekly_cases)
+                     * c(-1,1)) +
+  coord_flip()+
+  labs(y="Number of new cases",x="Age group")+
+  geom_text(data = ~subset(., gender == "female"), 
+            aes(label = round(weekly_cases, digits = 2),
+                y = weekly_cases), hjust = 0,size=3) +
+  geom_text(data = ~subset(., gender == "male"),
+            aes(label = round(weekly_cases, digits = 2),
+                y = -weekly_cases), hjust = 1,size =3)
+  
+plot2
+```
+
+While the highest number of tests conducted were in the age group of 0-19, the most positive cases were also detected in this age group.\
+It can be seen that in all age groups (except the 80+ age group) the number of COVID-19 positive cases in women is lower than the number of positive cases in men.
+
+[Fourth visualization]
+
+### Mortality by age and gender
+
+```{r 4.3}
+#death by age and gender
+death_by_age_and_gender <- corona_data %>%
+  select(age_group,weekly_deceased,gender)
+
+death_by_age_and_gender <- summarise_at(group_by(death_by_age_and_gender,age_group,gender),
+             vars(weekly_deceased),funs(sum))
+
+plot3 <- ggplot(death_by_age_and_gender, aes(x = age_group, fill = gender,
+         y = ifelse(test = gender == "male",yes = -weekly_deceased,
+                    no =  weekly_deceased))) + 
+  geom_bar(stat = "identity",color = "black") +
+  scale_y_continuous(labels = abs, limits =
+                       max(death_by_age_and_gender$weekly_deceased) * c(-1,1)) +
+  coord_flip()+
+  labs(y="Number of deceased",x="Age group")+
+  geom_text(data = ~subset(., gender == "female"),
+            aes(label = round(weekly_deceased, digits = 2),
+                y = weekly_deceased), hjust = 0,size=3) +
+  geom_text(data = ~subset(., gender == "male"),
+            aes(label = round(weekly_deceased, digits = 2),
+                y = -weekly_deceased), hjust = 1,size =3)
+
+plot3
+```
+
+Although the least amount of positive cases were found in the ages of 70+, this age group had the highest rate of death from the virus.\
+It can also be seen that in most age groups, the number of deceased men is much higher than the number of deceased women, except for the 80+ age group in which the number of deceased women is higher.
+
+[Fourth visualization]
+
+# Proportion Test
+
+As we said in the **clarification**, our data represents the entire population and therefore we will not be able to perform a difference in proportion test. If it was possible, we would have liked to check the difference between the percentage of sick women out of all cases versus the percentage of deceased women out of all deceased; this would help us understand the subsequent effect on men.\
+Thus, using the `sample_n()` command, we artificially sampled a sample in the size of 500 patients and we will perform our hypothesis test on it.
+
+## Hypothesis Testing: Women Population
+
+***Is the proportion of sick women greater than the proportion of deceased*** ***women?***\
+$H_0$ -- the proportion of sick women is *greater* than the proportion of deceased women\
+$H_1$ -- the proportion of sick women is *smaller* than the proportion of deceased women
+
+$$
+H_0:P_{sick\:females} - P_{deceased\:females} > 0\\
+H_1:P_{sick\:females} - P_{deceased\:females} < 0\\
+$$
+
+```{r prop-test1}
+set.seed(0)
+arti_sample <- sample_n(corona_data,500)
+##weekly deceased
+sum_of_weekly_deceased <-sum(arti_sample$weekly_deceased)
+women_weekly_deceased <- arti_sample%>%
+  select(gender,weekly_deceased)%>%
+  filter(gender=="female")
+sum_of_women_weekly_deceased<- sum(women_weekly_deceased$weekly_deceased)
+
+#weekly cases
+sum_of_weekly_cases <-sum(arti_sample$weekly_cases)
+women_weekly_cases <- arti_sample%>%
+  select(gender,weekly_cases)%>%
+  filter(gender=="female")
+sum_of_women_weekly_cases <- sum(women_weekly_cases$weekly_cases)
+
+prop.test(x=c(sum_of_women_weekly_deceased,sum_of_women_weekly_cases),
+          n=c(sum_of_weekly_deceased,sum_of_weekly_cases), 
+          p = NULL, alternative = "greater",
+          correct = FALSE)
+```
+
+The ***p value*** is greater than 0.05 and is therefore statistically significant, therefore we [approve]{.ul} the null hypothesis, meaning that the percentage of sick women is greater than the percentage of deceased women. This conclusion has an impact on the male population as well, because it is a complement to the female population. Therefore the ratio would be exactly the opposite, the percentage of deceased men is greater than the percentage of sick men.
+
+## Hypothesis Testing: Youth Population
+
+***Is the proportion of sick youth greater than the proportion of deceased youth?***\
+$H_0$ -- the proportion of sick youth is *equal* to the proportion of deceased youth\
+$H_1$ -- the proportion of sick youth is *different* than the proportion of deceased youth
+
+$$
+H_0:P_{sick\:youth} - P_{deceased \:youth} = 0\\
+H_1:P_{sick\:youth} - P_{deceased \:youth} \neq 0\\
+$$
+
+```{r prop-test2}
+arti_sample2 <- sample_n(corona_data,500)
+##weekly deceased
+sum_of_weekly_deceased <-sum(arti_sample2$weekly_deceased)
+young_weekly_deceased <- arti_sample2%>%
+  select(age_group,weekly_deceased)%>%
+  filter(age_group=="0-19")
+sum_of_young_weekly_deceased<- sum(young_weekly_deceased$weekly_deceased)
+
+#weekly cases
+sum_of_weekly_cases <-sum(arti_sample2$weekly_cases)
+young_weekly_cases <- arti_sample2%>%
+  select(age_group,weekly_cases)%>%
+  filter(age_group=="0-19")
+sum_of_young_weekly_cases <- sum(young_weekly_cases$weekly_cases)
+
+prop.test(x=c(sum_of_young_weekly_deceased,sum_of_young_weekly_cases),
+          n=c(sum_of_weekly_deceased,sum_of_weekly_cases), 
+          p = NULL, alternative = "two.sided",
+          correct = FALSE)
+```
+
+The ***p value*** is smaller than 0.05, therefore we [reject]{.ul} the null hypothesis, meaning that the proportions are not equal (as we saw in the visualization).
+
+# Chi-Square Test of Independence
+
+We will use a chi square independence test to check if the number of deceased from COVID-19 and gender are dependent on each other.\
+We are aware that this test is supposed to be done on a sample, but we will use all the data so that there will be no effect on different components in the statistical test.
+
+$$
+H_0: Number\,\ of\,\ deceased\,\, and \,\, Gender \,\, are \,\, independent\\
+H_1: Number\,\ of\,\ deceased\,\, and \,\, Gender \,\, are \,\, dependent\\
+$$
+
+```{r chisq}
+
+interval_b = c(-1,6,30,115)
+dead <- corona_data%>%
+  mutate(dead_num = cut(weekly_deceased, breaks= interval_b))%>%
+  group_by(dead_num)%>%
+  select(dead_num,gender)%>%
+  count(dead_num,gender)%>%
+  pivot_wider(id_cols = dead_num, names_from = gender, values_from = n)
+
+dead
+
+chi_dead<- dead[2:3]
+
+chisq.test(chi_dead)
+
+qchisq(0.95,df=2)
+```
+
+$$
+14.03= \chi^2_0 > \chi^2_{0.95, 2}= 5.991465
+$$
+
+The test statistic is 14.03 and is grater than the value from the chi square table. We therefore reject the null hypothesis and accept the alternative hypothesis, the number of deceased and gender are dependent.
+
+Now that we saw that there is a relation between the number of deceased from COVID-19 and gender we would like to expand our analysis using the multiple linear regression model to explain the change in the number of deceased by different genders, age groups and outbreak periods.
+
+# Multiple Regression
+
+## Hypothesis test {.tabset}
+
+We are interested in exploring whether there is a linear relationship between the number of deceased to gender, age group and the different COVID-19 outbreaks.
+
+$H_0$ - There isn't a linear relationship
+
+$H_1$ - There is a linear relationship
+
+$$
+H_0: \beta_1 = \beta_2 =  \ ...\ = \beta_k = 0\\
+H_1: ∃i\:such\:that\:\beta_i \neq 0
+$$
+
+We would like to check if the model assumptions are met:
+
+1.  The error is normally distributed
+
+2.  Homoscedasticity
+
+### Residuals by age group
+
+```{r res_homo_age_group}
+multi <-lm(formula = weekly_deceased ~ age_group + gender + outbreak, data=corona_data) %>%
+  summary()
+
+new_data <-corona_data %>%
+  mutate(residuals = multi$residuals)
+
+res_homo_age_group <-ggplot(new_data,aes(x=factor(age_group),y= residuals, fill= age_group))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Age group", y= "Residuals")
+res_homo_age_group
+```
+
+### Residuals by gender
+
+```{r res_homo_gender}
+res_homo_gender <-ggplot(new_data,aes(x=factor(gender),y= residuals, fill= gender))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Gender", y= "Residuals")
+res_homo_gender
+```
+
+### Residuals by outbreaks
+
+```{r res_homo_out_breaks}
+res_homo_out_breaks <-ggplot(new_data,aes(x=factor(outbreak),y= residuals, fill= outbreak))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))+
+  labs(x= "Outbreaks", y= "Residuals")
+  res_homo_out_breaks
+  
+```
+
+## 
+
+It can be seen in the linear regression plot that for gender and COVID-19 outbreaks, the variance is relatively identical, therefore we can assume that they are evenly distributed.\
+For different age groups we can see significant differences between the variances and therefore we assume that the homoscedasticity assumption doesn't hold.
+
+```{r res_norm }
+res_norm <-ggplot(new_data, aes(sample=residuals))+
+  geom_qq()+geom_qq_line(col="red")
+
+res_norm
+
+```
+
+From the `qqplot` we can deduct that the residuals are not distributed normally.\
+In conclusion, the model assumptions do not hold, but we will still examine it nonetheless knowing that it is uncertain that it is worth relying on because it is not necessarily accurate.
+
+```{r}
+multi
+```
+
+```{r}
+qf(.95, df1=17, df2=1662) 
+```
+
+$$
+f^{(17, 1662)}_{0.95} = 1.628919\\
+f_{statistic} = 91.07\\
+91.07 = f_{statistic}  > f^{(17, 1662)}_{0.95} = 1.628919
+$$
+
+As a result, we will reject the null hypothesis assumption, meaning that there is some relationship between the number of deceased and the variables we chose.
+
+Our reference group is women in the age group of 0-19 in the first COVID-19 outbreak. Based on the estimate column, it can be seen how changing the gender, age group or the specific COVID-19 outbreak will affect the number of deceased.\
+It can also be seen that the ***P-value*** of all the coefficients of the age groups from 50-54 to 80+ is less than 0.05, meaning that they are statistically significant.\
+The same can be said about the coefficients of men, the second corona outbreak, third outbreak and no outbreak.\
+The $R^2$ value is 0.4823, meaning that the model is able to explain 48.23% of the total variance.\
+It is difficult to determine unequivocally whether this is a good value or not without comparing it to other models.
+
+## Plot of regression {.tabset}
+
+### Number of deceased by outbreaks
+
+```{r Number of deceaseds by outbreaks}
+by_outbreak <- new_data%>% 
+  group_by(outbreak)%>%
+  select(outbreak,weekly_deceased)
+by_outbreak <-summarise_at(group_by(by_outbreak,outbreak),
+                                       vars(weekly_deceased),funs(sum))
+
+p1<-ggplot(by_outbreak, aes(x=outbreak,y=weekly_deceased))+
+  geom_bar(stat="identity",fill = "paleturquoise1", colour = "black" )+
+  labs(x="Outbreak",y="Weekly deceased", title = "Number of deaths by outbreak")
+
+p1
+```
+
+### Number of deceased by gender
+
+```{r Number of deceaseds by gender}
+by_gender <- new_data%>% 
+  group_by(gender)%>%
+  select(gender,weekly_deceased)
+by_gender<-summarise_at(group_by(by_gender,gender),
+                                       vars(weekly_deceased),funs(sum))
+
+p2<-ggplot(by_gender, aes(x=gender,y=weekly_deceased))+
+  geom_bar(stat="identity", fill = "paleturquoise3", colour = "black")+
+  labs(x="Gender",y="Weekly deceased", title = "Number of deaths by gender")
+
+p2
+```
+
+### Number of deceased by age
+
+```{r Number of deceaseds by age}
+by_age <- new_data%>% 
+  group_by(age_group)%>%
+  select(age_group,weekly_deceased)
+by_age<-summarise_at(group_by(by_age,age_group),
+                                       vars(weekly_deceased),funs(sum))
+
+p3<-ggplot(by_age, aes(x=age_group,y=weekly_deceased))+
+  geom_bar(stat="identity",fill = "turquoise3", colour = "black")+
+  labs(x="Age group",y="Weekly deceased",title = "Number of deaths by age")+
+  theme(axis.text.x = element_text(size= 8, angle = 90, vjust = 0.5, hjust=0.5))
+
+p3
+```
+
+# Discussion and Summary
+
+Although we all experienced the COVID-19 pandemic as citizens of Israel, it was fascinating to dive into the data and experience the pandemic from a slightly different angle. We have used many different techniques to explore our data and produce visualizations that will reflect it in the best way possible.\
+In addition, we used three different statistical tests to try and understand the variance between the different groups and the connections between them.
+
+We found that in terms of the amount of tests, the new COVID-19 cases, and the deceased, there are some differences between men and women. However, the most significant differences are between the different age groups. Another interesting conclusion that we had from the linear connection is that the third outbreak had the largest effect on the number of deceased among all the other outbreaks. Therefore, it can be concluded that the government conduct and decision-making between the outbreaks was not very effective.
+
+The collection of this type of data is of great importance because these datasets largely determined government decisions and policies during the pandemic. Even now it is possible to extract from this data a lot of information about the ways of coping with the next pandemic and about different populations and how the pandemic affects them.
+
+***Take care and stay healthy!***
+
+[Back To Top](#)
+
+*This study was made as a final project in the course "Introduction to statistic and data analysis in R" in Tel-Aviv University.*
+
+![](https://upload.wikimedia.org/wikipedia/en/thumb/b/b3/Tel_Aviv_university_logo.svg/1200px-Tel_Aviv_university_logo.svg.png){width="89"}
